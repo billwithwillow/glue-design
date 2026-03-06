@@ -32,11 +32,22 @@ function toPascalCase(name: string): string {
 
 // ── Recursively emit JSX for an ElementNode ──
 
-function emitJSX(node: ElementNode, indent: number): string {
+function emitJSX(node: ElementNode, indent: number, componentMap?: Record<string, { name: string }>): string {
   const pad = '  '.repeat(indent);
 
   if (node.tag === '#text') {
     return `${pad}${node.textContent ?? ''}`;
+  }
+
+  // Component ref → emit as <ComponentName />
+  if (node.tag === '__component_ref__' && componentMap) {
+    const refId = node.attributes['data-component-ref'];
+    const refInfo = refId ? componentMap[refId] : undefined;
+    if (refInfo) {
+      const compName = toPascalCase(refInfo.name);
+      return `${pad}<${compName} />`;
+    }
+    return `${pad}{/* nested component ref */}`;
   }
 
   const attrs: string[] = [];
@@ -55,6 +66,7 @@ function emitJSX(node: ElementNode, indent: number): string {
   // other attributes
   for (const [k, v] of Object.entries(node.attributes)) {
     if (k === 'data-element-id') continue; // internal id, skip
+    if (k === 'data-component-ref') continue; // internal ref, skip
     const jsxKey = k === 'for' ? 'htmlFor' : k === 'class' ? 'className' : k;
     attrs.push(`${jsxKey}="${v}"`);
   }
@@ -84,7 +96,7 @@ function emitJSX(node: ElementNode, indent: number): string {
     return `${pad}<${tag}${attrStr} />`;
   }
 
-  const innerLines = children.map((c) => emitJSX(c, indent + 1)).join('\n');
+  const innerLines = children.map((c) => emitJSX(c, indent + 1, componentMap)).join('\n');
   return `${pad}<${tag}${attrStr}>\n${innerLines}\n${pad}</${tag}>`;
 }
 
@@ -111,16 +123,29 @@ export interface ExportResult {
   css: string;
 }
 
-export function componentToReact(comp: CanvasComponent): ExportResult {
+export function componentToReact(comp: CanvasComponent, componentMap?: Record<string, { name: string }>): ExportResult {
   const componentName = toPascalCase(comp.name);
   const outerStyle = framePropsToStyle(comp.frameProps);
   const outerStyleStr = stylesObjectLiteral(outerStyle);
 
   const innerLines = comp.rootElements
-    .map((node) => emitJSX(node, 2))
+    .map((node) => emitJSX(node, 2, componentMap))
     .join('\n');
 
-  const jsx = `import React from 'react';
+  // Collect import statements for nested component refs
+  const imports: string[] = [`import React from 'react';`];
+  if (componentMap) {
+    const referencedIds = collectComponentRefs(comp.rootElements);
+    for (const refId of referencedIds) {
+      const refInfo = componentMap[refId];
+      if (refInfo) {
+        const refName = toPascalCase(refInfo.name);
+        imports.push(`import ${refName} from './${refName}';`);
+      }
+    }
+  }
+
+  const jsx = `${imports.join('\n')}
 
 function ${componentName}() {
   return (
@@ -133,4 +158,17 @@ ${innerLines}
 export default ${componentName};`;
 
   return { jsx, css: comp.cssRules };
+}
+
+/** Collect all component ref IDs from an element tree */
+function collectComponentRefs(nodes: ElementNode[]): string[] {
+  const refs: string[] = [];
+  for (const node of nodes) {
+    if (node.tag === '__component_ref__') {
+      const refId = node.attributes['data-component-ref'];
+      if (refId) refs.push(refId);
+    }
+    refs.push(...collectComponentRefs(node.children));
+  }
+  return refs;
 }

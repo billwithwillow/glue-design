@@ -26,6 +26,8 @@ export interface CanvasComponent {
   x: number;
   y: number;
   frameProps?: FrameProps;
+  parentId?: string;        // if nested inside another component
+  childRefs?: string[];     // IDs of nested child components
   sourceFilePath?: string;  // absolute path to originating source file (for write-back)
   sourceUrl?: string;       // URL it was fetched from (for context)
 }

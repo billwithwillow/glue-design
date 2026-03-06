@@ -20,6 +20,14 @@ function createDOMNode(node: ElementNode, inSvg: boolean): Node {
     return document.createTextNode(node.textContent ?? '');
   }
 
+  // Component ref placeholder — rendered as a div that the component renderer will fill
+  if (node.tag === '__component_ref__') {
+    const placeholder = document.createElement('div');
+    placeholder.setAttribute('data-component-ref', node.attributes['data-component-ref'] ?? '');
+    placeholder.setAttribute('data-element-id', node.id);
+    return placeholder;
+  }
+
   const enterSvg = inSvg || node.tag === 'svg';
   const el = enterSvg
     ? document.createElementNS(SVG_NS, node.tag)

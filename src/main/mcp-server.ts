@@ -34,12 +34,9 @@ function toExternalShape(comp: CanvasComponent): Record<string, any> {
 }
 
 /** Build a FrameProps object from flat MCP args (snake_case → camelCase) */
-function buildFrameProps(args: { fill?: string; shadow?: string; corner_radius?: number; border?: string; clip_content?: boolean }): import('../shared/canvas-types').FrameProps | undefined {
-  if (args.fill === undefined && args.shadow === undefined && args.corner_radius === undefined && args.border === undefined && args.clip_content === undefined) {
-    return undefined;
-  }
+function buildFrameProps(args: { fill?: string; shadow?: string; corner_radius?: number; border?: string; clip_content?: boolean }): import('../shared/canvas-types').FrameProps {
   return {
-    ...(args.fill !== undefined && { fill: args.fill }),
+    fill: args.fill ?? 'white',
     ...(args.shadow !== undefined && { shadow: args.shadow }),
     ...(args.corner_radius !== undefined && { cornerRadius: args.corner_radius }),
     ...(args.border !== undefined && { border: args.border }),
@@ -140,8 +137,9 @@ function registerTools(mcpServer: McpServer): void {
       for (const [k, v] of Object.entries(rest)) {
         if (v !== undefined) filtered[k] = v;
       }
-      const frameProps = buildFrameProps({ fill, shadow, corner_radius, border, clip_content });
-      if (frameProps !== undefined) filtered.frameProps = frameProps;
+      if (fill !== undefined || shadow !== undefined || corner_radius !== undefined || border !== undefined || clip_content !== undefined) {
+        filtered.frameProps = buildFrameProps({ fill, shadow, corner_radius, border, clip_content });
+      }
 
       const component = canvasStore.update(id, filtered);
       if (!component) {
@@ -307,6 +305,57 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
     }
   );
 
+  // ── Nesting tools ──
+
+  server.tool(
+    'nest_component',
+    'Nest a component inside another component. The child component becomes part of the parent\'s element tree and is rendered inline. Use this for composing designs (e.g. placing a pricing section inside a webpage).',
+    {
+      child_id: z.string().describe('Component ID of the child to nest'),
+      parent_id: z.string().describe('Component ID of the parent to nest into'),
+      insert_index: z.number().optional().describe('Position index within the target container (default: append to end)'),
+      target_element_id: z.string().optional().describe('HTML id of a specific element within the parent to insert into (default: root)'),
+    },
+    async (args: any) => {
+      const canvasStore = getCanvasStore();
+      const result = canvasStore.nestComponent(args.child_id, args.parent_id, args.insert_index, args.target_element_id);
+      if (!result) {
+        return { content: [{ type: 'text', text: `Error: Could not nest component ${args.child_id} into ${args.parent_id}. Check that both exist and nesting would not create a cycle.` }], isError: true };
+      }
+
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.parent);
+        mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.child);
+      }
+
+      return { content: [{ type: 'text', text: JSON.stringify({ nested: true, childId: args.child_id, parentId: args.parent_id }) }] };
+    }
+  );
+
+  server.tool(
+    'unnest_component',
+    'Remove a component from its parent and promote it to a top-level canvas component. The child\'s position is converted to absolute coordinates.',
+    {
+      child_id: z.string().describe('Component ID of the nested child to unnest'),
+    },
+    async (args: any) => {
+      const canvasStore = getCanvasStore();
+      const result = canvasStore.unnestComponent(args.child_id);
+      if (!result) {
+        return { content: [{ type: 'text', text: `Error: Component ${args.child_id} is not nested or does not exist.` }], isError: true };
+      }
+
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.parent);
+        mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.child);
+      }
+
+      return { content: [{ type: 'text', text: JSON.stringify({ unnested: true, childId: args.child_id, newX: result.child.x, newY: result.child.y }) }] };
+    }
+  );
+
   // ── Screenshot tool ──
 
   server.tool(
@@ -348,9 +397,16 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
         return { content: [{ type: 'text', text: `Error: Component ${args.id} not found` }], isError: true };
       }
 
+      // Build component map for nested ref resolution
+      const allComponents = canvasStore.list();
+      const componentMap: Record<string, { name: string }> = {};
+      for (const c of allComponents) {
+        componentMap[c.id] = { name: c.name };
+      }
+
       let code: string;
       if (args.format === 'react') {
-        const { jsx, css } = componentToReact(comp);
+        const { jsx, css } = componentToReact(comp, componentMap);
         code = css.trim() ? `${jsx}\n\n/* CSS */\n${css}` : jsx;
       } else {
         const html = elementTreeToHTML(comp.rootElements);
@@ -414,8 +470,15 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
       const format = args.format ?? 'react';
       let code: string;
 
+      // Build component map for nested ref resolution
+      const allComps = canvasStore.list();
+      const compMap: Record<string, { name: string }> = {};
+      for (const c of allComps) {
+        compMap[c.id] = { name: c.name };
+      }
+
       if (format === 'react') {
-        const { jsx, css } = componentToReact(comp);
+        const { jsx, css } = componentToReact(comp, compMap);
         code = css.trim() ? `${jsx}\n\n/* CSS */\n${css}` : jsx;
       } else {
         const html = elementTreeToHTML(comp.rootElements);

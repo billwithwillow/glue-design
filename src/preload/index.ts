@@ -18,6 +18,8 @@ export interface CanvasAPI {
       textContent?: string;
       attributes?: Record<string, string>;
     }) => void;
+    nestComponent: (childId: string, parentId: string, insertIndex?: number, targetElementId?: string) => void;
+    unnestComponent: (childId: string) => void;
     resizeComponent: (id: string, width: number, height: number) => void;
     listPages: () => Promise<{ pages: { id: string; name: string }[]; activePageId: string }>;
     createPage: (name: string) => Promise<{ id: string; name: string }>;
@@ -68,6 +70,12 @@ contextBridge.exposeInMainWorld('canvasAPI', {
       attributes?: Record<string, string>;
     }) => {
       ipcRenderer.send(IPC_CHANNELS.CANVAS_UPDATE_ELEMENT, { componentId, elementId, updates });
+    },
+    nestComponent: (childId: string, parentId: string, insertIndex?: number, targetElementId?: string) => {
+      ipcRenderer.send(IPC_CHANNELS.CANVAS_NEST_COMPONENT, { childId, parentId, insertIndex, targetElementId });
+    },
+    unnestComponent: (childId: string) => {
+      ipcRenderer.send(IPC_CHANNELS.CANVAS_UNNEST_COMPONENT, childId);
     },
     resizeComponent: (id: string, width: number, height: number) => {
       ipcRenderer.send(IPC_CHANNELS.CANVAS_RESIZE_COMPONENT, { id, width, height });

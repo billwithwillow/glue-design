@@ -75,6 +75,30 @@ export function setupIpcHandlers(): void {
     }
   });
 
+  // Canvas: nest component
+  ipcMain.on(IPC_CHANNELS.CANVAS_NEST_COMPONENT, (_event, data: { childId: string; parentId: string; insertIndex?: number; targetElementId?: string }) => {
+    const result = canvasStore.nestComponent(data.childId, data.parentId, data.insertIndex, data.targetElementId);
+    if (result) {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.parent);
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.child);
+      }
+    }
+  });
+
+  // Canvas: unnest component
+  ipcMain.on(IPC_CHANNELS.CANVAS_UNNEST_COMPONENT, (_event, childId: string) => {
+    const result = canvasStore.unnestComponent(childId);
+    if (result) {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.parent);
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, result.child);
+      }
+    }
+  });
+
   // Canvas: delete component
   ipcMain.on(IPC_CHANNELS.CANVAS_DELETE_COMPONENT, (_event, id: string) => {
     canvasStore.delete(id);
@@ -135,7 +159,10 @@ export function setupIpcHandlers(): void {
     const comp = canvasStore.get(id);
     if (!comp) return { error: `Component ${id} not found` };
     if (format === 'react') {
-      const { jsx, css } = componentToReact(comp);
+      const allComps = canvasStore.list();
+      const componentMap: Record<string, { name: string }> = {};
+      for (const c of allComps) componentMap[c.id] = { name: c.name };
+      const { jsx, css } = componentToReact(comp, componentMap);
       return { jsx, css };
     } else {
       const html = elementTreeToHTML(comp.rootElements);

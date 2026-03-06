@@ -13,6 +13,8 @@ interface RenderedComponent {
   x: number;
   y: number;
   frameProps?: FrameProps;
+  parentId?: string;
+  childRefs?: string[];
   wrapper: HTMLElement;
   shadow: ShadowRoot;
   contentDiv: HTMLElement;
@@ -82,7 +84,13 @@ export class ComponentRenderer {
     startX: number;
     startY: number;
     origPositions: Map<string, { x: number; y: number }>;
+    dropTargetId: string | null;
+    insertIndex: number;
+    targetElementId: string | null;
   } | null = null;
+
+  // Insertion guideline element
+  private insertionGuide: HTMLElement | null = null;
 
   constructor(world: HTMLElement, engine: CanvasEngine) {
     this.world = world;
@@ -132,7 +140,7 @@ export class ComponentRenderer {
     });
   }
 
-  addComponent(data: { id: string; name: string; rootElements: ElementNode[]; cssRules: string; width: number; height: number; x: number; y: number; frameProps?: FrameProps }): void {
+  addComponent(data: { id: string; name: string; rootElements: ElementNode[]; cssRules: string; width: number; height: number; x: number; y: number; frameProps?: FrameProps; parentId?: string; childRefs?: string[] }): void {
     // Wrapper positioned in world coordinates
     const wrapper = document.createElement('div');
     wrapper.className = 'canvas-component';
@@ -197,6 +205,8 @@ export class ComponentRenderer {
       x: data.x,
       y: data.y,
       frameProps: data.frameProps,
+      parentId: data.parentId,
+      childRefs: data.childRefs,
       wrapper,
       shadow,
       contentDiv,
@@ -204,6 +214,7 @@ export class ComponentRenderer {
       resolveTimer: null,
     };
     this.components.set(data.id, rendered);
+    this.renderNestedChildren(rendered);
     this.scheduleResolve(rendered);
     this.notifyCountChange();
 
@@ -212,7 +223,7 @@ export class ComponentRenderer {
     if (emptyState) emptyState.style.display = 'none';
   }
 
-  updateComponent(data: { id: string; name?: string; rootElements?: ElementNode[]; cssRules?: string; width?: number; height?: number }): void {
+  updateComponent(data: { id: string; name?: string; rootElements?: ElementNode[]; cssRules?: string; width?: number; height?: number; parentId?: string; childRefs?: string[]; frameProps?: FrameProps }): void {
     const comp = this.components.get(data.id);
     if (!comp) return;
 
@@ -269,6 +280,32 @@ export class ComponentRenderer {
       comp.frameProps = data.frameProps;
       const frame = comp.wrapper.querySelector('.component-frame') as HTMLElement;
       if (frame) applyFrameStyles(frame, comp.contentDiv, data.frameProps, this.selectedIds.has(data.id));
+    }
+
+    // Handle nesting state changes
+    const wasNested = comp.parentId !== undefined;
+    if (data.parentId !== undefined) comp.parentId = data.parentId;
+    else if (data.parentId === undefined && 'parentId' in data) delete comp.parentId;
+    if (data.childRefs !== undefined) comp.childRefs = data.childRefs;
+
+    const isNested = comp.parentId !== undefined;
+
+    // If just became nested, hide from top-level canvas
+    if (!wasNested && isNested) {
+      comp.wrapper.style.display = 'none';
+      // Re-render inside parent
+      const parent = this.components.get(comp.parentId!);
+      if (parent) this.renderNestedChildren(parent);
+    }
+    // If just became un-nested, show on canvas
+    if (wasNested && !isNested) {
+      comp.wrapper.style.display = '';
+      comp.wrapper.style.transform = `translate(${comp.x}px, ${comp.y}px)`;
+    }
+
+    // Re-render nested children if tree changed
+    if (data.rootElements !== undefined) {
+      this.renderNestedChildren(comp);
     }
   }
 
@@ -373,6 +410,9 @@ export class ComponentRenderer {
       startX: e.clientX,
       startY: e.clientY,
       origPositions,
+      dropTargetId: null,
+      insertIndex: -1,
+      targetElementId: null,
     };
 
     // Disable pointer events on all selected frames during drag
@@ -399,6 +439,53 @@ export class ComponentRenderer {
       comp.y = orig.y + dy;
       comp.wrapper.style.transform = `translate(${comp.x}px, ${comp.y}px)`;
     }
+
+    // Drop target detection (only for single-component drags)
+    if (this.dragging.origPositions.size === 1) {
+      const draggedId = this.dragging.origPositions.keys().next().value!;
+      const dragged = this.components.get(draggedId);
+      if (dragged) {
+        // Center point of dragged component in world coords
+        const cx = dragged.x + dragged.width / 2;
+        const cy = dragged.y + dragged.height / 2;
+
+        let newDropTarget: string | null = null;
+        for (const [id, comp] of this.components) {
+          if (id === draggedId) continue;
+          if (comp.parentId) continue; // don't drop into nested components
+          if (cx >= comp.x && cx <= comp.x + comp.width &&
+              cy >= comp.y && cy <= comp.y + comp.height) {
+            newDropTarget = id;
+            break;
+          }
+        }
+
+        // Update visual state
+        if (newDropTarget !== this.dragging.dropTargetId) {
+          // Remove old drop target highlight
+          if (this.dragging.dropTargetId) {
+            const old = this.components.get(this.dragging.dropTargetId);
+            if (old) old.wrapper.classList.remove('drop-target');
+          }
+          // Add new
+          if (newDropTarget) {
+            const target = this.components.get(newDropTarget);
+            if (target) target.wrapper.classList.add('drop-target');
+          }
+          this.dragging.dropTargetId = newDropTarget;
+        }
+
+        // Compute insertion guideline
+        if (newDropTarget) {
+          const slot = this.computeInsertionSlot(newDropTarget, e.clientX, e.clientY);
+          this.dragging.insertIndex = slot.index;
+          this.dragging.targetElementId = slot.targetElementId;
+          this.showInsertionGuide(newDropTarget, slot);
+        } else {
+          this.hideInsertionGuide();
+        }
+      }
+    }
   };
 
   private onDragEnd = (_e: PointerEvent): void => {
@@ -407,6 +494,17 @@ export class ComponentRenderer {
     const api = (window as any).canvasAPI;
     const updates: { id: string; x: number; y: number }[] = [];
 
+    // Clean up drop target visuals
+    if (this.dragging.dropTargetId) {
+      const target = this.components.get(this.dragging.dropTargetId);
+      if (target) target.wrapper.classList.remove('drop-target');
+    }
+    this.hideInsertionGuide();
+
+    const dropTargetId = this.dragging.dropTargetId;
+    const insertIndex = this.dragging.insertIndex;
+    const targetElementId = this.dragging.targetElementId;
+
     for (const id of this.dragging.origPositions.keys()) {
       const comp = this.components.get(id);
       if (!comp) continue;
@@ -414,6 +512,28 @@ export class ComponentRenderer {
       // Re-enable pointer events on frame
       const frame = comp.wrapper.querySelector('.component-frame') as HTMLElement;
       if (frame) frame.style.pointerEvents = '';
+
+      // Check if this is a nest operation
+      if (dropTargetId && this.dragging.origPositions.size === 1 && api) {
+        api.canvas.nestComponent(id, dropTargetId, insertIndex >= 0 ? insertIndex : undefined, targetElementId ?? undefined);
+        this.dragging = null;
+        return;
+      }
+
+      // Check if nested component dragged outside parent → unnest
+      if (comp.parentId && api) {
+        const parent = this.components.get(comp.parentId);
+        if (parent) {
+          const cx = comp.x + comp.width / 2;
+          const cy = comp.y + comp.height / 2;
+          if (cx < parent.x || cx > parent.x + parent.width ||
+              cy < parent.y || cy > parent.y + parent.height) {
+            api.canvas.unnestComponent(id);
+            this.dragging = null;
+            return;
+          }
+        }
+      }
 
       updates.push({ id: comp.id, x: comp.x, y: comp.y });
     }
@@ -544,6 +664,162 @@ export class ComponentRenderer {
     const ids = Array.from(this.selectedIds);
     for (const cb of this.selectionListeners) {
       cb(ids);
+    }
+  }
+
+  // ── Nested component rendering ──
+
+  private renderNestedChildren(parent: RenderedComponent): void {
+    const placeholders = parent.shadow.querySelectorAll('[data-component-ref]');
+    for (const placeholder of placeholders) {
+      const childId = placeholder.getAttribute('data-component-ref');
+      if (!childId) continue;
+
+      const child = this.components.get(childId);
+      if (!child) continue;
+
+      // Clear placeholder and render child's content into it
+      placeholder.innerHTML = '';
+
+      // Add child's CSS
+      const style = document.createElement('style');
+      style.textContent = child.cssRules;
+      placeholder.appendChild(style);
+
+      // Add child's content
+      const frag = elementTreeToDOM(child.rootElements);
+      placeholder.appendChild(frag);
+
+      // Apply child frame props as styles on placeholder
+      if (child.frameProps?.fill) {
+        (placeholder as HTMLElement).style.background = child.frameProps.fill;
+      }
+      if (child.frameProps?.cornerRadius !== undefined) {
+        (placeholder as HTMLElement).style.borderRadius = `${child.frameProps.cornerRadius}px`;
+      }
+
+      // Hide child's top-level wrapper
+      child.wrapper.style.display = 'none';
+    }
+  }
+
+  // ── Insertion guideline logic ──
+
+  private computeInsertionSlot(parentId: string, clientX: number, clientY: number): { index: number; targetElementId: string | null; rect: { x: number; y: number; width: number; height: number; horizontal: boolean } | null } {
+    const parent = this.components.get(parentId);
+    if (!parent) return { index: -1, targetElementId: null, rect: null };
+
+    const contentDiv = parent.contentDiv;
+    // Find the nearest flex container or use contentDiv's first child
+    const rootEl = contentDiv.firstElementChild as HTMLElement;
+    if (!rootEl) return { index: 0, targetElementId: null, rect: null };
+
+    // Walk up from a point to find the layout container
+    const container = rootEl;
+    const computedStyle = window.getComputedStyle(container);
+    const isRow = computedStyle.flexDirection === 'row' || computedStyle.flexDirection === 'row-reverse';
+    const horizontal = !isRow; // horizontal guideline for column layout, vertical for row
+
+    const children = Array.from(container.children).filter(
+      (el) => !el.hasAttribute('data-component-ref') || el.getAttribute('data-component-ref') === ''
+    );
+
+    // Get parent frame rect to convert client coords
+    const frameEl = parent.wrapper.querySelector('.component-frame');
+    if (!frameEl) return { index: 0, targetElementId: null, rect: null };
+    const frameRect = frameEl.getBoundingClientRect();
+
+    if (children.length === 0) {
+      return {
+        index: 0,
+        targetElementId: container.id || null,
+        rect: {
+          x: frameRect.left,
+          y: frameRect.top + frameRect.height / 2,
+          width: frameRect.width,
+          height: 2,
+          horizontal: true,
+        },
+      };
+    }
+
+    const childRects = children.map(c => c.getBoundingClientRect());
+
+    if (horizontal) {
+      // Column layout: use Y
+      for (let i = 0; i < childRects.length; i++) {
+        const midY = (childRects[i].top + childRects[i].bottom) / 2;
+        if (clientY < midY) {
+          const guideY = i === 0 ? childRects[0].top : (childRects[i - 1].bottom + childRects[i].top) / 2;
+          return {
+            index: i,
+            targetElementId: container.id || null,
+            rect: { x: frameRect.left, y: guideY, width: frameRect.width, height: 2, horizontal: true },
+          };
+        }
+      }
+      // After last child
+      const guideY = childRects[childRects.length - 1].bottom + 4;
+      return {
+        index: children.length,
+        targetElementId: container.id || null,
+        rect: { x: frameRect.left, y: guideY, width: frameRect.width, height: 2, horizontal: true },
+      };
+    } else {
+      // Row layout: use X
+      for (let i = 0; i < childRects.length; i++) {
+        const midX = (childRects[i].left + childRects[i].right) / 2;
+        if (clientX < midX) {
+          const guideX = i === 0 ? childRects[0].left : (childRects[i - 1].right + childRects[i].left) / 2;
+          return {
+            index: i,
+            targetElementId: container.id || null,
+            rect: { x: guideX, y: frameRect.top, width: 2, height: frameRect.height, horizontal: false },
+          };
+        }
+      }
+      const guideX = childRects[childRects.length - 1].right + 4;
+      return {
+        index: children.length,
+        targetElementId: container.id || null,
+        rect: { x: guideX, y: frameRect.top, width: 2, height: frameRect.height, horizontal: false },
+      };
+    }
+  }
+
+  private showInsertionGuide(parentId: string, slot: { rect: { x: number; y: number; width: number; height: number; horizontal: boolean } | null }): void {
+    if (!slot.rect) {
+      this.hideInsertionGuide();
+      return;
+    }
+
+    if (!this.insertionGuide) {
+      this.insertionGuide = document.createElement('div');
+      this.insertionGuide.className = 'insertion-guide';
+      document.body.appendChild(this.insertionGuide);
+    }
+
+    const guide = this.insertionGuide;
+    guide.style.display = 'block';
+
+    if (slot.rect.horizontal) {
+      guide.className = 'insertion-guide horizontal';
+      guide.style.left = `${slot.rect.x + 8}px`;
+      guide.style.top = `${slot.rect.y - 1}px`;
+      guide.style.width = `${slot.rect.width - 16}px`;
+      guide.style.height = '2px';
+    } else {
+      guide.className = 'insertion-guide vertical';
+      guide.style.left = `${slot.rect.x - 1}px`;
+      guide.style.top = `${slot.rect.y + 8}px`;
+      guide.style.width = '2px';
+      guide.style.height = `${slot.rect.height - 16}px`;
+    }
+  }
+
+  private hideInsertionGuide(): void {
+    if (this.insertionGuide) {
+      this.insertionGuide.style.display = 'none';
     }
   }
 

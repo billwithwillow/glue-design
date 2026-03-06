@@ -44,7 +44,7 @@ export class CanvasStore {
       height: data.height ?? 300,
       x: this.nextX,
       y: this.nextY,
-      ...(data.frameProps !== undefined && { frameProps: data.frameProps }),
+      frameProps: data.frameProps ?? { fill: 'white' },
       ...(data.sourceFilePath !== undefined && { sourceFilePath: data.sourceFilePath }),
       ...(data.sourceUrl !== undefined && { sourceUrl: data.sourceUrl }),
     };
@@ -104,9 +104,113 @@ export class CanvasStore {
 
   delete(id: string): boolean {
     const components = this.getActivePageComponents();
-    if (!components[id]) return false;
+    const comp = components[id];
+    if (!comp) return false;
+
+    // If nested, un-nest first
+    if (comp.parentId) {
+      this.unnestComponent(id);
+    }
+
+    // Promote children to top-level
+    if (comp.childRefs && comp.childRefs.length > 0) {
+      for (const childId of [...comp.childRefs]) {
+        this.unnestComponent(childId);
+      }
+    }
+
     delete components[id];
     return true;
+  }
+
+  nestComponent(childId: string, parentId: string, insertIndex?: number, targetElementId?: string): { parent: CanvasComponent; child: CanvasComponent } | null {
+    const components = this.getActivePageComponents();
+    const child = components[childId];
+    const parent = components[parentId];
+    if (!child || !parent) return null;
+    if (childId === parentId) return null;
+
+    // Circular ref check: walk parent chain
+    let ancestor: string | undefined = parentId;
+    while (ancestor) {
+      if (ancestor === childId) return null; // would create cycle
+      ancestor = components[ancestor]?.parentId;
+    }
+
+    // If already nested elsewhere, un-nest first
+    if (child.parentId) {
+      this.unnestComponent(childId);
+    }
+
+    // Create ref node
+    const refNode: ElementNode = {
+      id: `ref-${childId}`,
+      tag: '__component_ref__',
+      attributes: { 'data-component-ref': childId },
+      classes: [],
+      styles: {},
+      children: [],
+    };
+
+    // Insert into parent's element tree
+    if (targetElementId) {
+      const target = this.findElementByHtmlId(parent.rootElements, targetElementId);
+      if (target) {
+        const idx = insertIndex ?? target.children.length;
+        target.children.splice(idx, 0, refNode);
+      } else {
+        // Fallback to root
+        const idx = insertIndex ?? parent.rootElements.length;
+        parent.rootElements.splice(idx, 0, refNode);
+      }
+    } else {
+      const idx = insertIndex ?? parent.rootElements.length;
+      parent.rootElements.splice(idx, 0, refNode);
+    }
+
+    // Update relationships
+    child.parentId = parentId;
+    if (!parent.childRefs) parent.childRefs = [];
+    parent.childRefs.push(childId);
+
+    return { parent, child };
+  }
+
+  unnestComponent(childId: string): { parent: CanvasComponent; child: CanvasComponent } | null {
+    const components = this.getActivePageComponents();
+    const child = components[childId];
+    if (!child || !child.parentId) return null;
+
+    const parent = components[child.parentId];
+    if (!parent) return null;
+
+    // Remove ref node from parent's element tree
+    this.removeRefNode(parent.rootElements, childId);
+
+    // Convert to absolute position
+    child.x += parent.x;
+    child.y += parent.y;
+
+    // Clear relationships
+    const parentId = child.parentId;
+    delete child.parentId;
+    if (parent.childRefs) {
+      parent.childRefs = parent.childRefs.filter(id => id !== childId);
+      if (parent.childRefs.length === 0) delete parent.childRefs;
+    }
+
+    return { parent, child };
+  }
+
+  private removeRefNode(nodes: ElementNode[], childId: string): boolean {
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i].tag === '__component_ref__' && nodes[i].attributes['data-component-ref'] === childId) {
+        nodes.splice(i, 1);
+        return true;
+      }
+      if (this.removeRefNode(nodes[i].children, childId)) return true;
+    }
+    return false;
   }
 
   get(id: string): CanvasComponent | null {

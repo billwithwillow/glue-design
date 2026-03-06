@@ -398,6 +398,24 @@ body {
   color: #6366f1;
 }
 
+/* ── Drop target ── */
+
+.canvas-component.drop-target .component-frame {
+  border-color: #3b82f6;
+  border-style: dashed;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.insertion-guide {
+  position: fixed;
+  background: #3b82f6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 9999;
+  transition: top 0.08s ease, left 0.08s ease;
+}
+
 /* ── Element mode ── */
 
 .canvas-component.element-mode .component-frame {
