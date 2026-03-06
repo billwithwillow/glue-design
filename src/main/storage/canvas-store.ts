@@ -2,10 +2,28 @@ import { v4 as uuidv4 } from 'uuid';
 import type { CanvasComponent, CanvasPage, CanvasProject, ElementNode, FrameProps } from '../../shared/canvas-types';
 import { htmlToElementTree } from '../../shared/element-tree';
 
+export interface UndoEntry {
+  type: 'delete-component' | 'delete-element';
+  pageId: string;
+  snapshots: CanvasComponent[];       // pre-deletion state
+  postSnapshots: CanvasComponent[];   // post-deletion state (empty for deleted components)
+  deletedComponentId?: string;        // for delete-component: which ID was removed
+}
+
+export interface UndoRedoResult {
+  restoredComponents?: CanvasComponent[];
+  updatedComponents?: CanvasComponent[];
+  deletedComponentId?: string;
+}
+
 export class CanvasStore {
   private project: CanvasProject;
   private nextX = 50;
   private nextY = 50;
+
+  private undoStack: UndoEntry[] = [];
+  private redoStack: UndoEntry[] = [];
+  private static MAX_HISTORY = 50;
 
   constructor() {
     const pageId = uuidv4();
@@ -29,6 +47,18 @@ export class CanvasStore {
 
   private getActivePageComponents(): Record<string, CanvasComponent> {
     return this.project.pages[this.project.activePageId].components;
+  }
+
+  private cloneComponent(comp: CanvasComponent): CanvasComponent {
+    return JSON.parse(JSON.stringify(comp));
+  }
+
+  private pushUndo(entry: UndoEntry): void {
+    this.undoStack.push(entry);
+    if (this.undoStack.length > CanvasStore.MAX_HISTORY) {
+      this.undoStack.shift();
+    }
+    this.redoStack.length = 0;
   }
 
   // ── Component CRUD (scoped to active page) ──
@@ -107,6 +137,17 @@ export class CanvasStore {
     const comp = components[id];
     if (!comp) return false;
 
+    // Snapshot affected components before mutation
+    const preSnapshots: CanvasComponent[] = [this.cloneComponent(comp)];
+    if (comp.parentId && components[comp.parentId]) {
+      preSnapshots.push(this.cloneComponent(components[comp.parentId]));
+    }
+    if (comp.childRefs) {
+      for (const childId of comp.childRefs) {
+        if (components[childId]) preSnapshots.push(this.cloneComponent(components[childId]));
+      }
+    }
+
     // If nested, un-nest first
     if (comp.parentId) {
       this.unnestComponent(id);
@@ -120,6 +161,23 @@ export class CanvasStore {
     }
 
     delete components[id];
+
+    // Snapshot surviving components after mutation
+    const postSnapshots: CanvasComponent[] = [];
+    for (const snap of preSnapshots) {
+      if (snap.id !== id && components[snap.id]) {
+        postSnapshots.push(this.cloneComponent(components[snap.id]));
+      }
+    }
+
+    this.pushUndo({
+      type: 'delete-component',
+      pageId: this.project.activePageId,
+      snapshots: preSnapshots,
+      postSnapshots,
+      deletedComponentId: id,
+    });
+
     return true;
   }
 
@@ -328,6 +386,74 @@ export class CanvasStore {
     return component;
   }
 
+  // ── Undo / Redo ──
+
+  undo(): UndoRedoResult | null {
+    const entry = this.undoStack.pop();
+    if (!entry || entry.pageId !== this.project.activePageId) {
+      if (entry) this.undoStack.push(entry); // put it back if wrong page
+      return null;
+    }
+
+    const components = this.getActivePageComponents();
+
+    // Restore pre-deletion snapshots
+    const restoredComponents: CanvasComponent[] = [];
+    const updatedComponents: CanvasComponent[] = [];
+
+    for (const snap of entry.snapshots) {
+      const existed = !!components[snap.id];
+      components[snap.id] = JSON.parse(JSON.stringify(snap));
+      if (!existed) {
+        restoredComponents.push(components[snap.id]);
+      } else {
+        updatedComponents.push(components[snap.id]);
+      }
+    }
+
+    // Push inverse to redo stack
+    this.redoStack.push(entry);
+
+    return {
+      restoredComponents: restoredComponents.length > 0 ? restoredComponents : undefined,
+      updatedComponents: updatedComponents.length > 0 ? updatedComponents : undefined,
+      deletedComponentId: undefined,
+    };
+  }
+
+  redo(): UndoRedoResult | null {
+    const entry = this.redoStack.pop();
+    if (!entry || entry.pageId !== this.project.activePageId) {
+      if (entry) this.redoStack.push(entry);
+      return null;
+    }
+
+    const components = this.getActivePageComponents();
+
+    const updatedComponents: CanvasComponent[] = [];
+    let deletedComponentId: string | undefined;
+
+    if (entry.type === 'delete-component' && entry.deletedComponentId) {
+      // Re-apply deletion
+      delete components[entry.deletedComponentId];
+      deletedComponentId = entry.deletedComponentId;
+    }
+
+    // Restore post-deletion snapshots for surviving components
+    for (const snap of entry.postSnapshots) {
+      components[snap.id] = JSON.parse(JSON.stringify(snap));
+      updatedComponents.push(components[snap.id]);
+    }
+
+    // Push inverse to undo stack
+    this.undoStack.push(entry);
+
+    return {
+      updatedComponents: updatedComponents.length > 0 ? updatedComponents : undefined,
+      deletedComponentId,
+    };
+  }
+
   findElementInTree(nodes: ElementNode[], targetId: string): ElementNode | null {
     for (const node of nodes) {
       if (node.id === targetId) return node;
@@ -384,6 +510,8 @@ export class CanvasStore {
     const component = this.get(componentId);
     if (!component) return null;
 
+    const preSnapshot = this.cloneComponent(component);
+
     const result = this.findParentInTree(component.rootElements, elementId, null);
     if (!result) return null;
 
@@ -393,6 +521,13 @@ export class CanvasStore {
     } else {
       parent.children.splice(index, 1);
     }
+
+    this.pushUndo({
+      type: 'delete-element',
+      pageId: this.project.activePageId,
+      snapshots: [preSnapshot],
+      postSnapshots: [this.cloneComponent(component)],
+    });
 
     return component;
   }

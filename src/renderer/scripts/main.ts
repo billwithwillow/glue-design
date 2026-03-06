@@ -75,10 +75,19 @@ function init(): void {
 
   // Keyboard shortcuts
   window.addEventListener('keydown', (e) => {
-    // Backspace / Delete → delete selected components
-    if ((e.key === 'Backspace' || e.key === 'Delete') && !isEditingText(e)) {
+    // Backspace / Delete → delete selected components (only in component mode, not element mode)
+    if ((e.key === 'Backspace' || e.key === 'Delete') && !isEditingText(e) && !selectionManager.isInElementMode()) {
       e.preventDefault();
       renderer.deleteSelected();
+    }
+    // Cmd+Z → undo, Cmd+Shift+Z → redo
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      window.canvasAPI?.canvas.undo();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      window.canvasAPI?.canvas.redo();
     }
     // Cmd+Shift+I → toggle dev tools
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'I') {

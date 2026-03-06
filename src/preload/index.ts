@@ -7,7 +7,10 @@ export interface CanvasAPI {
     onComponentUpdated: (callback: (component: any) => void) => void;
     onElementsAppended: (callback: (data: { componentId: string; targetHtmlId: string | null; newNodes: any[] }) => void) => void;
     deleteComponent: (id: string) => void;
+    deleteElement: (componentId: string, elementId: string) => void;
     onComponentDeleted: (callback: (id: string) => void) => void;
+    undo: () => void;
+    redo: () => void;
     onGetSelected: (callback: (requestId: string) => void) => void;
     respondSelected: (data: { requestId: string; result: any }) => void;
     updatePosition: (id: string, x: number, y: number) => void;
@@ -49,8 +52,17 @@ contextBridge.exposeInMainWorld('canvasAPI', {
     deleteComponent: (id: string) => {
       ipcRenderer.send(IPC_CHANNELS.CANVAS_DELETE_COMPONENT, id);
     },
+    deleteElement: (componentId: string, elementId: string) => {
+      ipcRenderer.send(IPC_CHANNELS.CANVAS_DELETE_ELEMENT, { componentId, elementId });
+    },
     onComponentDeleted: (callback: (id: string) => void) => {
       ipcRenderer.on(IPC_CHANNELS.CANVAS_COMPONENT_DELETED, (_event, id) => callback(id));
+    },
+    undo: () => {
+      ipcRenderer.send(IPC_CHANNELS.CANVAS_UNDO);
+    },
+    redo: () => {
+      ipcRenderer.send(IPC_CHANNELS.CANVAS_REDO);
     },
     onGetSelected: (callback: (requestId: string) => void) => {
       ipcRenderer.on(IPC_CHANNELS.CANVAS_GET_SELECTED, (_event, requestId) => callback(requestId));

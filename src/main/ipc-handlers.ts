@@ -129,6 +129,40 @@ export function setupIpcHandlers(): void {
     }
   });
 
+  // Undo
+  ipcMain.on(IPC_CHANNELS.CANVAS_UNDO, () => {
+    const result = canvasStore.undo();
+    if (!result) return;
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    if (result.restoredComponents) {
+      for (const comp of result.restoredComponents) {
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_CREATED, comp);
+      }
+    }
+    if (result.updatedComponents) {
+      for (const comp of result.updatedComponents) {
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, comp);
+      }
+    }
+  });
+
+  // Redo
+  ipcMain.on(IPC_CHANNELS.CANVAS_REDO, () => {
+    const result = canvasStore.redo();
+    if (!result) return;
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    if (result.deletedComponentId) {
+      win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_DELETED, result.deletedComponentId);
+    }
+    if (result.updatedComponents) {
+      for (const comp of result.updatedComponents) {
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, comp);
+      }
+    }
+  });
+
   // Page management
   ipcMain.handle(IPC_CHANNELS.CANVAS_LIST_PAGES, () => {
     return {

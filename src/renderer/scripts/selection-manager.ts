@@ -246,6 +246,26 @@ export class SelectionManager {
       return;
     }
 
+    // Delete/Backspace in element mode → delete selected elements
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.mode === 'element' && this.activeComponentId) {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const isEditing = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable;
+      if (!isEditing && this.selectedElementIds.size > 0) {
+        e.preventDefault();
+        const api = (window as any).canvasAPI;
+        if (api) {
+          for (const elId of this.selectedElementIds) {
+            api.canvas.deleteElement(this.activeComponentId, elId);
+          }
+        }
+        this.selectedElementIds.clear();
+        this.overlayManager.hideAll();
+        this.sidebar.hide();
+        this.notifyChange();
+        return;
+      }
+    }
+
     if (e.key === 'Escape') {
       if (this.mode === 'element') {
         const prevComponentId = this.activeComponentId;

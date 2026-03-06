@@ -30,6 +30,10 @@ export const IPC_CHANNELS = {
   CANVAS_GET_COMPONENT_RECT_RESULT: 'canvas:get-component-rect-result',
   CANVAS_CAPTURE_COMPONENT: 'canvas:capture-component',
 
+  // Undo/Redo
+  CANVAS_UNDO: 'canvas:undo',
+  CANVAS_REDO: 'canvas:redo',
+
   // DevTools
   TOGGLE_DEVTOOLS: 'devtools:toggle',
 
