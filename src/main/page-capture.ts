@@ -53,7 +53,14 @@ function buildCaptureScript(selector?: string): string {
       el.setAttribute('src', origin + (el.getAttribute('src').charAt(0) === '/' ? '' : '/') + el.getAttribute('src'));
     }
     if (el.hasAttribute('srcset')) {
-      el.setAttribute('srcset', el.getAttribute('srcset').replace(/(^|,\s*)(\/)([^ ,]+)/g, '$1' + origin + '$2$3'));
+      var parts = el.getAttribute('srcset').split(',');
+      for (var j = 0; j < parts.length; j++) {
+        var trimmed = parts[j].trim();
+        if (trimmed.charAt(0) === '/' && trimmed.indexOf('://') === -1) {
+          parts[j] = parts[j].replace(trimmed.split(' ')[0], origin + trimmed.split(' ')[0]);
+        }
+      }
+      el.setAttribute('srcset', parts.join(','));
     }
     if (el.hasAttribute('poster') && el.getAttribute('poster').indexOf('://') === -1) {
       el.setAttribute('poster', origin + (el.getAttribute('poster').charAt(0) === '/' ? '' : '/') + el.getAttribute('poster'));
