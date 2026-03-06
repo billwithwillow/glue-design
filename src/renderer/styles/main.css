@@ -378,19 +378,33 @@ body {
 }
 
 .component-frame {
-  background: transparent;
+  position: relative;
   border-radius: 12px;
   border: 1.5px solid #e5e5e5;
   overflow: hidden;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.canvas-component:hover:not(.selected) .component-frame {
+/* Overlay pseudo-element for hover/selected tint — avoids touching background */
+.component-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  transition: background 0.15s;
+}
+
+.canvas-component:hover:not(.selected) .component-frame::after {
   background: rgba(0, 0, 0, 0.02);
 }
 
-.canvas-component.selected .component-frame {
+.canvas-component.selected .component-frame::after {
   background: rgba(99, 102, 241, 0.06);
+}
+
+.canvas-component.selected .component-frame {
   border-color: #6366f1;
 }
 
@@ -487,13 +501,12 @@ body {
 
 .canvas-component.holographic .component-frame {
   animation: hologram-pulse 1.8s ease-in-out infinite;
-  background: rgba(0, 212, 255, 0.025);
   border-color: rgba(0, 212, 255, 0.6);
-  transition: border-color 1s ease, box-shadow 1s ease, background 1s ease;
+  transition: border-color 1s ease, box-shadow 1s ease;
 }
 
 .canvas-component:not(.holographic) .component-frame {
-  transition: border-color 1s ease, box-shadow 1s ease, background 1s ease;
+  transition: border-color 1s ease, box-shadow 1s ease;
 }
 
 /* ── Empty state ── */

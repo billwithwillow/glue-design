@@ -45,8 +45,11 @@ function applyFrameStyles(frame: HTMLElement, contentDiv: HTMLElement, frameProp
     frame.style.border = frameProps?.border ?? '1.5px solid #e5e5e5';
   }
 
-  // Fill: set on contentDiv (inside shadow DOM) so CSS states on the frame element still apply
-  contentDiv.style.background = frameProps?.fill ?? 'white';
+  // Fill: set on frame (outside shadow DOM, immune to component CSS overrides).
+  // Using background-color on frame ensures it's always visible regardless of what
+  // component CSS does inside the shadow DOM.
+  const fill = frameProps?.fill ?? 'white';
+  frame.style.backgroundColor = fill;
 
   // Clip content
   const clip = frameProps?.clipContent !== false;
@@ -687,9 +690,7 @@ export class ComponentRenderer {
       placeholder.appendChild(frag);
 
       // Apply child frame props as styles on placeholder
-      if (child.frameProps?.fill) {
-        (placeholder as HTMLElement).style.background = child.frameProps.fill;
-      }
+      (placeholder as HTMLElement).style.background = child.frameProps?.fill ?? 'white';
       if (child.frameProps?.cornerRadius !== undefined) {
         (placeholder as HTMLElement).style.borderRadius = `${child.frameProps.cornerRadius}px`;
       }
