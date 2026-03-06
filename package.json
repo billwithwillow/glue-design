@@ -1,0 +1,36 @@
+{
+  "name": "@getglue/canvas-app",
+  "version": "0.1.0",
+  "description": "Standalone Figma-like infinite canvas for Glue components",
+  "main": "src/launcher.js",
+  "author": "Tejas Priyadarshi",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "npm run clean && npm run build:main && npm run build:preload && npm run build:renderer && npm run copy:assets",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "node scripts/build-renderer.js",
+    "build:preload": "tsc -p tsconfig.preload.json",
+    "copy:assets": "cp src/renderer/index.html dist/renderer/ && mkdir -p dist/renderer/styles && cp src/renderer/styles/*.css dist/renderer/styles/",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --dev",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "node-html-parser": "^6.1.13",
+    "uuid": "^9.0.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@types/uuid": "^9.0.8",
+    "electron": "^28.2.3",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.3.3"
+  }
+}

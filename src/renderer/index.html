@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Glue Canvas</title>
+  <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/sidebar.css" />
+</head>
+<body>
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <span class="toolbar-title">Glue Canvas</span>
+      <div class="toolbar-separator"></div>
+      <span class="component-count" id="component-count">0 components</span>
+    </div>
+    <div class="toolbar-right">
+      <button class="toolbar-btn" id="zoom-out" title="Zoom out">−</button>
+      <span class="zoom-display" id="zoom-display">100%</span>
+      <button class="toolbar-btn" id="zoom-in" title="Zoom in">+</button>
+      <div class="toolbar-separator"></div>
+      <button class="toolbar-btn" id="fit-all" title="Fit all">⊡</button>
+    </div>
+  </div>
+
+  <!-- Left Sidebar (Pages + Layers) -->
+  <div id="pages-sidebar">
+    <div class="pages-sidebar-header">
+      <span>Pages</span>
+      <button id="add-page-btn" title="Add page">+</button>
+    </div>
+    <div id="pages-list"></div>
+    <div class="left-sidebar-divider"></div>
+    <div class="pages-sidebar-header">
+      <span>Layers</span>
+    </div>
+    <div id="layers-list"></div>
+  </div>
+
+  <!-- Canvas -->
+  <div id="canvas-viewport">
+    <div id="canvas-world"></div>
+    <div id="selection-overlay-layer"></div>
+  </div>
+
+  <!-- Properties Sidebar -->
+  <div id="properties-sidebar" class="properties-sidebar hidden">
+    <div class="sidebar-header"><span>Properties</span></div>
+    <div id="sidebar-content"></div>
+  </div>
+
+  <!-- Empty state -->
+  <div id="empty-state">
+    <div class="empty-icon">◇</div>
+    <div class="empty-title">No components yet</div>
+    <div class="empty-subtitle">
+      Use the MCP server or REST API to create components<br />
+      <code>POST /canvas/create-component</code>
+    </div>
+  </div>
+
+  <script type="module" src="scripts/main.js"></script>
+</body>
+</html>
