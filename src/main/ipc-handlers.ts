@@ -64,6 +64,20 @@ export function setupIpcHandlers(): void {
     }
   });
 
+  // Canvas: update frame props (fill, shadow, border, cornerRadius, clipContent)
+  ipcMain.on(IPC_CHANNELS.CANVAS_UPDATE_FRAME_PROPS, (_event, data: { id: string; frameProps: Record<string, any> }) => {
+    const existing = canvasStore.get(data.id);
+    if (!existing) return;
+    const merged = { ...existing.frameProps, ...data.frameProps };
+    const component = canvasStore.update(data.id, { frameProps: merged });
+    if (component) {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_UPDATED, component);
+      }
+    }
+  });
+
   // Canvas: resize frame (component mode)
   ipcMain.on(IPC_CHANNELS.CANVAS_RESIZE_COMPONENT, (_event, data: { id: string; width: number; height: number }) => {
     const component = canvasStore.update(data.id, { width: data.width, height: data.height });

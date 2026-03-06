@@ -12,6 +12,7 @@ export const IPC_CHANNELS = {
   CANVAS_UPDATE_ELEMENT: 'canvas:update-element',
   CANVAS_DELETE_ELEMENT: 'canvas:delete-element',
   CANVAS_RESIZE_COMPONENT: 'canvas:resize-component',
+  CANVAS_UPDATE_FRAME_PROPS: 'canvas:update-frame-props',
   CANVAS_NEST_COMPONENT: 'canvas:nest-component',
   CANVAS_UNNEST_COMPONENT: 'canvas:unnest-component',
 

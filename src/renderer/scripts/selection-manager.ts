@@ -56,7 +56,8 @@ export class SelectionManager {
       if (this.mode === 'component' && ids.length === 1) {
         const frameEl = renderer.getFrameElement(ids[0]);
         if (frameEl) overlayManager.showComponentSelection(ids[0], frameEl);
-        sidebar.showComponentPanel(ids[0]);
+        const comp = renderer.getRenderedComponent(ids[0]);
+        sidebar.showComponentPanel(ids[0], comp?.frameProps);
       } else if (this.mode === 'component') {
         overlayManager.clearComponentSelection();
         sidebar.hide();

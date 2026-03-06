@@ -1,4 +1,4 @@
-import type { ElementNode } from '../../shared/canvas-types';
+import type { ElementNode, FrameProps } from '../../shared/canvas-types';
 
 interface StyleField {
   label: string;
@@ -44,6 +44,7 @@ export class PropertiesSidebar {
 
   private componentId: string | null = null;
   private elements: ElementNode[] = [];
+  private frameProps: FrameProps = {};
 
   constructor() {
     this.container = document.getElementById('properties-sidebar')!;
@@ -58,9 +59,10 @@ export class PropertiesSidebar {
     this.show();
   }
 
-  showComponentPanel(componentId: string): void {
+  showComponentPanel(componentId: string, frameProps?: FrameProps): void {
     this.componentId = componentId;
     this.elements = [];
+    this.frameProps = frameProps ?? {};
     this.renderComponentPanel();
     this.show();
   }
@@ -75,11 +77,16 @@ export class PropertiesSidebar {
     this.viewport.classList.remove('sidebar-open');
     this.componentId = null;
     this.elements = [];
+    this.frameProps = {};
   }
 
   private renderComponentPanel(): void {
     this.content.innerHTML = '';
 
+    // ── Frame Props section ──
+    this.renderFramePropsSection();
+
+    // ── Export section ──
     const section = document.createElement('div');
     section.className = 'sidebar-section';
 
@@ -121,6 +128,98 @@ export class PropertiesSidebar {
     body.appendChild(screenshotRow);
     section.appendChild(body);
     this.content.appendChild(section);
+  }
+
+  private renderFramePropsSection(): void {
+    const fp = this.frameProps;
+
+    // Fill
+    this.addSection('Fill', () => {
+      const wrapper = document.createElement('div');
+      const fillField: StyleField = { label: 'Color', property: 'fill', type: 'color' };
+      const input = this.createInput(fillField, fp.fill ?? 'white', (value) => {
+        this.commitFrameUpdate({ fill: value });
+      });
+      wrapper.appendChild(input);
+      return wrapper;
+    }, { collapsible: true, defaultOpen: true });
+
+    // Corner Radius
+    this.addSection('Corner Radius', () => {
+      const wrapper = document.createElement('div');
+      const currentRadius = fp.cornerRadius ?? 12;
+      const radiusValue = currentRadius >= 9999 ? '50%' : `${currentRadius}px`;
+      const radiusRow = this.createRadiusWidget(radiusValue, (newValue) => {
+        let numVal: number;
+        if (newValue === '50%') {
+          numVal = 9999;
+        } else {
+          numVal = parseFloat(newValue) || 0;
+        }
+        this.commitFrameUpdate({ cornerRadius: numVal });
+      });
+      wrapper.appendChild(radiusRow);
+      return wrapper;
+    }, { collapsible: true, defaultOpen: true });
+
+    // Border
+    this.addSection('Border', () => {
+      const wrapper = document.createElement('div');
+      const input = this.createInput(
+        { label: 'Border', property: 'border', type: 'text' },
+        fp.border ?? '1.5px solid #e5e5e5',
+        (value) => { this.commitFrameUpdate({ border: value }); }
+      );
+      wrapper.appendChild(input);
+      return wrapper;
+    }, { collapsible: true, defaultOpen: false });
+
+    // Shadow
+    this.addSection('Shadow', () => {
+      const wrapper = document.createElement('div');
+      const input = this.createInput(
+        { label: 'Shadow', property: 'shadow', type: 'text' },
+        fp.shadow ?? '',
+        (value) => { this.commitFrameUpdate({ shadow: value }); }
+      );
+      wrapper.appendChild(input);
+      return wrapper;
+    }, { collapsible: true, defaultOpen: false });
+
+    // Clip Content
+    this.addSection('Clip Content', () => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'sidebar-clip-row';
+
+      const label = document.createElement('label');
+      label.className = 'sidebar-clip-label';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'sidebar-clip-checkbox';
+      checkbox.checked = fp.clipContent !== false; // default true
+
+      const text = document.createElement('span');
+      text.textContent = 'Clip overflow';
+
+      checkbox.addEventListener('change', () => {
+        this.commitFrameUpdate({ clipContent: checkbox.checked });
+      });
+
+      label.appendChild(checkbox);
+      label.appendChild(text);
+      wrapper.appendChild(label);
+      return wrapper;
+    }, { collapsible: false });
+  }
+
+  private commitFrameUpdate(partial: Partial<FrameProps>): void {
+    if (!this.componentId) return;
+    const api = (window as any).canvasAPI;
+    if (!api) return;
+
+    this.frameProps = { ...this.frameProps, ...partial };
+    api.canvas.updateFrameProps(this.componentId, partial);
   }
 
   private exportAndCopy(format: 'react' | 'html', btn: HTMLButtonElement): void {
@@ -524,10 +623,12 @@ export class PropertiesSidebar {
       textInput.value = value === 'Mixed' ? '' : value;
       if (value === 'Mixed') textInput.placeholder = 'Mixed';
 
-      swatch.addEventListener('input', () => {
+      const colorHandler = () => {
         textInput.value = swatch.value;
         onChange(swatch.value);
-      });
+      };
+      swatch.addEventListener('input', colorHandler);
+      swatch.addEventListener('change', colorHandler);
 
       const commitText = () => onChange(textInput.value);
       textInput.addEventListener('change', commitText);
