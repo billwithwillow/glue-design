@@ -63,6 +63,19 @@ export class SelectionManager {
       }
     });
 
+    // Hide resize handles during drag, re-show after
+    renderer.onDragStateChange((isDragging) => {
+      if (isDragging) {
+        overlayManager.clearComponentSelection();
+      } else {
+        const ids = renderer.getSelectedIds();
+        if (this.mode === 'component' && ids.length === 1) {
+          const frameEl = renderer.getFrameElement(ids[0]);
+          if (frameEl) overlayManager.showComponentSelection(ids[0], frameEl);
+        }
+      }
+    });
+
     this.setup();
   }
 

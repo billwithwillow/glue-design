@@ -77,6 +77,7 @@ export class ComponentRenderer {
   private selectedIds = new Set<string>();
   private countListeners: CountChangeCallback[] = [];
   private selectionListeners: SelectionChangeCallback[] = [];
+  private dragListeners: ((isDragging: boolean) => void)[] = [];
 
   // Drag state (multi-drag)
   private dragging: {
@@ -414,6 +415,8 @@ export class ComponentRenderer {
       targetElementId: null,
     };
 
+    for (const cb of this.dragListeners) cb(true);
+
     // Disable pointer events on all selected frames during drag
     for (const selId of this.selectedIds) {
       const comp = this.components.get(selId);
@@ -515,7 +518,7 @@ export class ComponentRenderer {
       // Check if this is a nest operation
       if (dropTargetId && this.dragging.origPositions.size === 1 && api) {
         api.canvas.nestComponent(id, dropTargetId, insertIndex >= 0 ? insertIndex : undefined, targetElementId ?? undefined);
-        this.dragging = null;
+        this.endDrag();
         return;
       }
 
@@ -528,7 +531,7 @@ export class ComponentRenderer {
           if (cx < parent.x || cx > parent.x + parent.width ||
               cy < parent.y || cy > parent.y + parent.height) {
             api.canvas.unnestComponent(id);
-            this.dragging = null;
+            this.endDrag();
             return;
           }
         }
@@ -546,8 +549,13 @@ export class ComponentRenderer {
       }
     }
 
-    this.dragging = null;
+    this.endDrag();
   };
+
+  private endDrag(): void {
+    this.dragging = null;
+    for (const cb of this.dragListeners) cb(false);
+  }
 
   // ── Public accessors for selection/overlay ──
 
@@ -657,6 +665,10 @@ export class ComponentRenderer {
 
   onSelectionChange(cb: SelectionChangeCallback): void {
     this.selectionListeners.push(cb);
+  }
+
+  onDragStateChange(cb: (isDragging: boolean) => void): void {
+    this.dragListeners.push(cb);
   }
 
   private notifySelectionChange(): void {
