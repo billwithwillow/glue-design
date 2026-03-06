@@ -67,10 +67,10 @@ function buildCaptureScript(selector?: string): string {
     }
   }
 
-  // 1c. Collapse canvas and video elements (they render blank in static capture)
+  // 1c. Remove canvas and video elements (they render blank in static capture)
   var blanks = target.querySelectorAll('canvas, video');
   for (var i = 0; i < blanks.length; i++) {
-    blanks[i].style.display = 'none';
+    blanks[i].parentNode.removeChild(blanks[i]);
   }
 
   // 2. Collect stylesheets
@@ -217,34 +217,27 @@ export async function captureRenderedPage(opts: CaptureOptions): Promise<Capture
     // Extra settle time for JS rendering
     await new Promise(r => setTimeout(r, opts.waitMs ?? 500));
 
-    // Resize window to full content height so IntersectionObserver-based
-    // lazy content (useInView, scroll animations) triggers for all sections
-    const contentHeight = await win.webContents.executeJavaScript(
-      `Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)`
-    );
-    const viewportWidth = opts.viewportWidth ?? 1280;
-    if (contentHeight > win.getBounds().height) {
-      win.setContentSize(viewportWidth, contentHeight);
-      // Scroll incrementally to trigger any scroll-based observers
-      await win.webContents.executeJavaScript(`
-        new Promise(function(resolve) {
-          var totalHeight = document.body.scrollHeight;
-          var step = window.innerHeight;
-          var pos = 0;
-          function scrollStep() {
-            pos += step;
-            window.scrollTo(0, pos);
-            if (pos < totalHeight) {
-              setTimeout(scrollStep, 50);
-            } else {
-              window.scrollTo(0, 0);
-              setTimeout(resolve, 200);
-            }
+    // Scroll through page to trigger IntersectionObserver-based lazy content
+    // (useInView, scroll animations, lazy images) without resizing the window
+    // (resizing would break vh-based layouts by inflating viewport height)
+    await win.webContents.executeJavaScript(`
+      new Promise(function(resolve) {
+        var totalHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        var step = Math.max(window.innerHeight / 2, 200);
+        var pos = 0;
+        function scrollStep() {
+          pos += step;
+          window.scrollTo(0, pos);
+          if (pos < totalHeight) {
+            setTimeout(scrollStep, 60);
+          } else {
+            window.scrollTo(0, 0);
+            setTimeout(resolve, 300);
           }
-          scrollStep();
-        });
-      `);
-    }
+        }
+        scrollStep();
+      });
+    `);
 
     // Inject capture script and extract DOM + styles
     const result = await win.webContents.executeJavaScript(buildCaptureScript(opts.selector));
