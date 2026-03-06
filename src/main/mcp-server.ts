@@ -628,6 +628,8 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
     'capture_url',
     `Capture a fully-rendered page from a URL and create a canvas component. Opens a real browser, executes all JavaScript, waits for the page to render, then extracts the live DOM with computed styles. Works with any framework — React, Vue, Next.js, Vite, Storybook, static HTML, etc.
 
+IMPORTANT: The URL must be reachable before calling this tool. If the target is a local dev server (e.g. localhost:3000), make sure it is running first. If it is not running, start it yourself (e.g. run \`npm run dev\` or \`npx next dev\` in the project directory) and wait for it to be ready before calling capture_url.
+
 Example: capture_url({ url: "http://localhost:3000", selector: "#hero", source_file: "/path/to/HeroSection.tsx" })`,
     {
       url: z.string().describe('URL to capture (e.g. "http://localhost:3000")'),
@@ -666,7 +668,7 @@ Example: capture_url({ url: "http://localhost:3000", selector: "#hero", source_f
         html: result.html,
         css,
         width: args.width ?? result.viewportWidth,
-        height: args.height ?? result.viewportHeight,
+        height: args.height ?? result.contentHeight,
         sourceUrl: args.url,
         ...(args.source_file && { sourceFilePath: path.resolve(args.source_file) }),
       });

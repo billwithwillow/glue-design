@@ -18,6 +18,7 @@ export interface CaptureResult {
   screenshot?: string;
   viewportWidth: number;
   viewportHeight: number;
+  contentHeight: number;
 }
 
 function buildCaptureScript(selector?: string): string {
@@ -30,7 +31,16 @@ function buildCaptureScript(selector?: string): string {
   if (selector) {
     target = document.querySelector(selector);
   } else {
-    target = document.body.children[0];
+    // Skip hidden elements (Next.js inserts hidden divs for internal CSS)
+    var children = document.body.children;
+    target = null;
+    for (var i = 0; i < children.length; i++) {
+      if (!children[i].hasAttribute('hidden') && window.getComputedStyle(children[i]).display !== 'none') {
+        target = children[i];
+        break;
+      }
+    }
+    if (!target) target = document.body.children[0];
   }
   if (!target) return { error: 'Element not found' };
 
@@ -131,7 +141,8 @@ function buildCaptureScript(selector?: string): string {
     computedStyles: computedRules.join('\\n'),
     title: document.title,
     viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight
+    viewportHeight: window.innerHeight,
+    contentHeight: target.scrollHeight
   };
 })()`;
 }
@@ -194,6 +205,7 @@ export async function captureRenderedPage(opts: CaptureOptions): Promise<Capture
       title: result.title,
       viewportWidth: result.viewportWidth,
       viewportHeight: result.viewportHeight,
+      contentHeight: result.contentHeight,
       screenshot,
     };
   } finally {
