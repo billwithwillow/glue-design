@@ -8,6 +8,7 @@ import { IPC_CHANNELS } from '../shared/ipc-channels';
 import { elementTreeToHTML, htmlToElementTree } from '../shared/element-tree';
 import type { CanvasComponent } from '../shared/canvas-types';
 import { handleMcpRequest } from './mcp-server';
+import { captureRenderedPage } from './page-capture';
 
 let server: http.Server | null = null;
 let serverPort: number | null = null;
@@ -209,6 +210,56 @@ export async function startLocalServer(): Promise<number> {
         } catch (err: any) {
           res.writeHead(500);
           res.end(JSON.stringify({ error: err.message || 'Internal error' }));
+        }
+      } else if (req.method === 'POST' && req.url === '/canvas/capture-url') {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { url, selector, wait_for, wait_ms, name, width, height, viewport_width, viewport_height, source_file, include_screenshot } = body;
+
+          if (!url) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'url is required' }));
+            return;
+          }
+
+          const result = await captureRenderedPage({
+            url,
+            selector,
+            waitFor: wait_for,
+            waitMs: wait_ms,
+            viewportWidth: viewport_width,
+            viewportHeight: viewport_height,
+            includeScreenshot: include_screenshot,
+          });
+
+          const canvasStore = getCanvasStore();
+          const derivedName = name ?? result.title ?? 'Captured Page';
+          const css = [result.css, result.computedStyles].filter(Boolean).join('\n\n');
+          const component = canvasStore.create({
+            name: derivedName,
+            html: result.html,
+            css,
+            width: width ?? result.viewportWidth,
+            height: height ?? result.viewportHeight,
+            sourceUrl: url,
+            ...(source_file && { sourceFilePath: path.resolve(source_file) }),
+          });
+
+          const mainWindow = BrowserWindow.getAllWindows()[0];
+          if (mainWindow) {
+            mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_CREATED, component);
+          }
+
+          const responseBody: any = { success: true, component: toExternalShape(component) };
+          if (result.screenshot) {
+            responseBody.screenshot = result.screenshot;
+          }
+
+          res.writeHead(200);
+          res.end(JSON.stringify(responseBody));
+        } catch (err: any) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ error: err.message || 'Capture failed' }));
         }
       } else {
         res.writeHead(404);

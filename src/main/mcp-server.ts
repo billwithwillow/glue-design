@@ -10,6 +10,7 @@ import { IPC_CHANNELS } from '../shared/ipc-channels';
 import { elementTreeToHTML, htmlToElementTree } from '../shared/element-tree';
 import type { CanvasComponent } from '../shared/canvas-types';
 import { componentToReact } from '../shared/export-utils';
+import { captureRenderedPage } from './page-capture';
 import { z } from 'zod';
 
 function getMainWindow(): BrowserWindow | null {
@@ -624,98 +625,50 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
   // ── Round-trip tools ──
 
   server.tool(
-    'fetch_from_url',
-    `Fetch rendered HTML from a running dev server and create a canvas component directly — no JSX-to-HTML translation required. Works with any framework (Next.js, Vite, Storybook, etc.). Linked stylesheets are fetched and inlined automatically.
+    'capture_url',
+    `Capture a fully-rendered page from a URL and create a canvas component. Opens a real browser, executes all JavaScript, waits for the page to render, then extracts the live DOM with computed styles. Works with any framework — React, Vue, Next.js, Vite, Storybook, static HTML, etc.
 
-Example: fetch_from_url({ url: "http://localhost:3000", selector: "#hero", source_file: "/path/to/HeroSection.tsx" })`,
+Example: capture_url({ url: "http://localhost:3000", selector: "#hero", source_file: "/path/to/HeroSection.tsx" })`,
     {
-      url: z.string().describe('Full URL to fetch (e.g. "http://localhost:3000/components/hero")'),
-      selector: z.string().optional().describe('CSS selector to extract (e.g. "#hero", ".hero-section"). Default: first child of body.'),
+      url: z.string().describe('URL to capture (e.g. "http://localhost:3000")'),
+      selector: z.string().optional().describe('CSS selector to extract (default: body > first element)'),
+      wait_for: z.string().optional().describe('CSS selector to wait for before capturing (e.g. "[data-loaded]", ".hero-section")'),
+      wait_ms: z.number().optional().describe('Extra ms to wait after page load for JS to settle (default: 500)'),
+      name: z.string().optional().describe('Component name (default: derived from URL/page title)'),
+      width: z.number().optional().describe('Component width on canvas (default: viewport width)'),
+      height: z.number().optional().describe('Component height on canvas (default: viewport height)'),
+      viewport_width: z.number().optional().describe('Browser viewport width (default: 1280)'),
+      viewport_height: z.number().optional().describe('Browser viewport height (default: 800)'),
       source_file: z.string().optional().describe('Absolute path to the source file (stored for write-back)'),
-      name: z.string().optional().describe('Component name (default: derived from URL path)'),
-      width: z.number().optional().describe('Width in pixels (default: 400)'),
-      height: z.number().optional().describe('Height in pixels (default: 300)'),
+      include_screenshot: z.boolean().optional().describe('Include a screenshot in the response (default: false)'),
     },
     async (args: any) => {
-      const { parse } = await import('node-html-parser');
-
-      // Fetch the page
-      let responseText: string;
+      let result;
       try {
-        const response = await fetch(args.url);
-        if (!response.ok) {
-          return { content: [{ type: 'text', text: `Error: HTTP ${response.status} ${response.statusText} from ${args.url}` }], isError: true };
-        }
-        responseText = await response.text();
+        result = await captureRenderedPage({
+          url: args.url,
+          selector: args.selector,
+          waitFor: args.wait_for,
+          waitMs: args.wait_ms,
+          viewportWidth: args.viewport_width,
+          viewportHeight: args.viewport_height,
+          includeScreenshot: args.include_screenshot,
+        });
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Error: Could not fetch ${args.url} — ${err.message}` }], isError: true };
+        return { content: [{ type: 'text', text: `Error capturing ${args.url}: ${err.message}` }], isError: true };
       }
 
-      const root = parse(responseText);
-
-      // Extract target HTML
-      let targetNode;
-      if (args.selector) {
-        targetNode = root.querySelector(args.selector);
-        if (!targetNode) {
-          return { content: [{ type: 'text', text: `Error: Selector "${args.selector}" not found in the page` }], isError: true };
-        }
-      } else {
-        // First meaningful child of body (or root if no body)
-        const body = root.querySelector('body');
-        const container = body ?? root;
-        targetNode = container.childNodes.find((n: any) => n.nodeType === 1); // first element node
-        if (!targetNode) {
-          return { content: [{ type: 'text', text: 'Error: No HTML element found in the page' }], isError: true };
-        }
-      }
-
-      const html = (targetNode as any).outerHTML as string;
-
-      // Inline linked stylesheets (best-effort)
-      const baseUrl = new URL(args.url);
-      const linkTags = root.querySelectorAll('link[rel="stylesheet"]');
-      const cssChunks: string[] = [];
-      const warnings: string[] = [];
-
-      for (const link of linkTags) {
-        const href = link.getAttribute('href');
-        if (!href) continue;
-        try {
-          const cssUrl = new URL(href, baseUrl.origin);
-          const cssResp = await fetch(cssUrl.toString());
-          if (cssResp.ok) {
-            cssChunks.push(await cssResp.text());
-          } else {
-            warnings.push(`Could not fetch stylesheet: ${href} (HTTP ${cssResp.status})`);
-          }
-        } catch {
-          warnings.push(`Could not fetch stylesheet: ${href}`);
-        }
-      }
-
-      // Also grab any inline <style> blocks
-      const styleTags = root.querySelectorAll('style');
-      for (const tag of styleTags) {
-        const text = tag.textContent.trim();
-        if (text) cssChunks.push(text);
-      }
-
-      const css = cssChunks.join('\n\n');
-
-      // Derive name from URL path if not provided
-      const derivedName = args.name ?? (baseUrl.pathname.replace(/^\/|\/$/g, '').replace(/\//g, '-') || 'Fetched Component');
-
-      // Create the component
       const canvasStore = getCanvasStore();
+      const derivedName = args.name ?? result.title ?? 'Captured Page';
+      const css = [result.css, result.computedStyles].filter(Boolean).join('\n\n');
       const component = canvasStore.create({
         name: derivedName,
-        html,
+        html: result.html,
         css,
-        width: args.width,
-        height: args.height,
-        ...(args.source_file && { sourceFilePath: path.resolve(args.source_file) }),
+        width: args.width ?? result.viewportWidth,
+        height: args.height ?? result.viewportHeight,
         sourceUrl: args.url,
+        ...(args.source_file && { sourceFilePath: path.resolve(args.source_file) }),
       });
 
       const mainWindow = getMainWindow();
@@ -723,13 +676,16 @@ Example: fetch_from_url({ url: "http://localhost:3000", selector: "#hero", sourc
         mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_CREATED, component);
       }
 
-      const result: any = toExternalShape(component);
-      if (warnings.length > 0) {
-        result.warnings = warnings;
+      const contentBlocks: any[] = [];
+      if (result.screenshot) {
+        contentBlocks.push({ type: 'image', data: result.screenshot, mimeType: 'image/png' });
       }
-      result.stylesheetsInlined = linkTags.length;
+      contentBlocks.push({
+        type: 'text',
+        text: JSON.stringify(toExternalShape(component), null, 2),
+      });
 
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return { content: contentBlocks };
     }
   );
 
@@ -923,7 +879,7 @@ Use frame props on create_component/update_component for frame-level effects —
 
 \`\`\`
 IMPORT (lossless):
-1. fetch_from_url(url, selector?, source_file?) → rendered HTML directly onto canvas
+1. capture_url(url, selector?, source_file?) → fully-rendered page onto canvas
 
 ITERATE:
 2. insert_html, update_element, etc. — visual iteration on canvas
