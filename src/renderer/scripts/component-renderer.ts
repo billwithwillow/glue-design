@@ -46,11 +46,7 @@ function applyFrameStyles(frame: HTMLElement, contentDiv: HTMLElement, frameProp
   }
 
   // Fill: set on contentDiv (inside shadow DOM) so CSS states on the frame element still apply
-  if (frameProps?.fill !== undefined) {
-    contentDiv.style.background = frameProps.fill;
-  } else {
-    contentDiv.style.background = '';
-  }
+  contentDiv.style.background = frameProps?.fill ?? 'white';
 
   // Clip content
   const clip = frameProps?.clipContent !== false;
