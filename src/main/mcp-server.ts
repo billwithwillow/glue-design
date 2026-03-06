@@ -28,6 +28,8 @@ function toExternalShape(comp: CanvasComponent): Record<string, any> {
     x: comp.x,
     y: comp.y,
     ...(comp.frameProps !== undefined && { frameProps: comp.frameProps }),
+    ...(comp.sourceFilePath !== undefined && { sourceFilePath: comp.sourceFilePath }),
+    ...(comp.sourceUrl !== undefined && { sourceUrl: comp.sourceUrl }),
   };
 }
 
@@ -90,6 +92,8 @@ function registerTools(mcpServer: McpServer): void {
       corner_radius: z.number().optional().describe('Corner radius in px (default: 12)'),
       border: z.string().optional().describe('CSS border shorthand (default: "1.5px solid #e5e5e5"). Use "none" to remove.'),
       clip_content: z.boolean().optional().describe('Clip children to frame bounds (default: true)'),
+      source_file: z.string().optional().describe('Absolute path to the source file this component originated from (stored for write-back)'),
+      source_url: z.string().optional().describe('URL this component was fetched from (informational)'),
     },
     async (args: any) => {
       const canvasStore = getCanvasStore();
@@ -100,6 +104,8 @@ function registerTools(mcpServer: McpServer): void {
         width: args.width,
         height: args.height,
         frameProps: buildFrameProps(args),
+        ...(args.source_file && { sourceFilePath: path.resolve(args.source_file) }),
+        ...(args.source_url && { sourceUrl: args.source_url }),
       });
 
       const mainWindow = getMainWindow();
@@ -377,10 +383,11 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
 
   server.tool(
     'write_component',
-    'Export a component and write it to a file on disk. Use this to drop a canvas component directly into your codebase. Pass include_screenshot: true to also write a companion PNG at the same path.',
+    'Export a component and write it to a file on disk. Use this to drop a canvas component directly into your codebase. Pass use_source_path: true to write back to the original source file (requires sourceFilePath on the component). Pass include_screenshot: true to also write a companion PNG.',
     {
       id: z.string().describe('Component ID to export'),
-      file_path: z.string().describe('Absolute or relative file path to write (e.g. "/path/to/MyCard.tsx" or "./src/components/MyCard.tsx")'),
+      file_path: z.string().optional().describe('Absolute or relative file path to write. Optional if use_source_path is true.'),
+      use_source_path: z.boolean().optional().describe('If true, write to the component\'s stored sourceFilePath (set during fetch_from_url or create_component)'),
       format: z.enum(['react', 'html']).optional().describe('"react" (default) writes a JSX .tsx file; "html" writes a standalone HTML file'),
       include_screenshot: z.boolean().optional().describe('When true, also writes a companion <same-basename>.png screenshot next to the code file'),
     },
@@ -389,6 +396,19 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
       const comp = canvasStore.get(args.id);
       if (!comp) {
         return { content: [{ type: 'text', text: `Error: Component ${args.id} not found` }], isError: true };
+      }
+
+      // Resolve target file path
+      let targetPath: string | undefined;
+      if (args.use_source_path) {
+        if (!comp.sourceFilePath) {
+          return { content: [{ type: 'text', text: 'Error: use_source_path is true but this component has no sourceFilePath. Set source_file when creating or fetching.' }], isError: true };
+        }
+        targetPath = comp.sourceFilePath;
+      } else if (args.file_path) {
+        targetPath = args.file_path;
+      } else {
+        return { content: [{ type: 'text', text: 'Error: Either file_path or use_source_path: true is required.' }], isError: true };
       }
 
       const format = args.format ?? 'react';
@@ -403,7 +423,7 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
         code = css ? `<style>\n${css}\n</style>\n\n${html}` : html;
       }
 
-      const resolvedPath = path.resolve(args.file_path);
+      const resolvedPath = path.resolve(targetPath!);
       try {
         fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
         fs.writeFileSync(resolvedPath, code, 'utf8');
@@ -538,6 +558,186 @@ Use mode="replace_children" to fix a wrong subtree without rebuilding the whole 
     }
   );
 
+  // ── Round-trip tools ──
+
+  server.tool(
+    'fetch_from_url',
+    `Fetch rendered HTML from a running dev server and create a canvas component directly — no JSX-to-HTML translation required. Works with any framework (Next.js, Vite, Storybook, etc.). Linked stylesheets are fetched and inlined automatically.
+
+Example: fetch_from_url({ url: "http://localhost:3000", selector: "#hero", source_file: "/path/to/HeroSection.tsx" })`,
+    {
+      url: z.string().describe('Full URL to fetch (e.g. "http://localhost:3000/components/hero")'),
+      selector: z.string().optional().describe('CSS selector to extract (e.g. "#hero", ".hero-section"). Default: first child of body.'),
+      source_file: z.string().optional().describe('Absolute path to the source file (stored for write-back)'),
+      name: z.string().optional().describe('Component name (default: derived from URL path)'),
+      width: z.number().optional().describe('Width in pixels (default: 400)'),
+      height: z.number().optional().describe('Height in pixels (default: 300)'),
+    },
+    async (args: any) => {
+      const { parse } = await import('node-html-parser');
+
+      // Fetch the page
+      let responseText: string;
+      try {
+        const response = await fetch(args.url);
+        if (!response.ok) {
+          return { content: [{ type: 'text', text: `Error: HTTP ${response.status} ${response.statusText} from ${args.url}` }], isError: true };
+        }
+        responseText = await response.text();
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: Could not fetch ${args.url} — ${err.message}` }], isError: true };
+      }
+
+      const root = parse(responseText);
+
+      // Extract target HTML
+      let targetNode;
+      if (args.selector) {
+        targetNode = root.querySelector(args.selector);
+        if (!targetNode) {
+          return { content: [{ type: 'text', text: `Error: Selector "${args.selector}" not found in the page` }], isError: true };
+        }
+      } else {
+        // First meaningful child of body (or root if no body)
+        const body = root.querySelector('body');
+        const container = body ?? root;
+        targetNode = container.childNodes.find((n: any) => n.nodeType === 1); // first element node
+        if (!targetNode) {
+          return { content: [{ type: 'text', text: 'Error: No HTML element found in the page' }], isError: true };
+        }
+      }
+
+      const html = (targetNode as any).outerHTML as string;
+
+      // Inline linked stylesheets (best-effort)
+      const baseUrl = new URL(args.url);
+      const linkTags = root.querySelectorAll('link[rel="stylesheet"]');
+      const cssChunks: string[] = [];
+      const warnings: string[] = [];
+
+      for (const link of linkTags) {
+        const href = link.getAttribute('href');
+        if (!href) continue;
+        try {
+          const cssUrl = new URL(href, baseUrl.origin);
+          const cssResp = await fetch(cssUrl.toString());
+          if (cssResp.ok) {
+            cssChunks.push(await cssResp.text());
+          } else {
+            warnings.push(`Could not fetch stylesheet: ${href} (HTTP ${cssResp.status})`);
+          }
+        } catch {
+          warnings.push(`Could not fetch stylesheet: ${href}`);
+        }
+      }
+
+      // Also grab any inline <style> blocks
+      const styleTags = root.querySelectorAll('style');
+      for (const tag of styleTags) {
+        const text = tag.textContent.trim();
+        if (text) cssChunks.push(text);
+      }
+
+      const css = cssChunks.join('\n\n');
+
+      // Derive name from URL path if not provided
+      const derivedName = args.name ?? (baseUrl.pathname.replace(/^\/|\/$/g, '').replace(/\//g, '-') || 'Fetched Component');
+
+      // Create the component
+      const canvasStore = getCanvasStore();
+      const component = canvasStore.create({
+        name: derivedName,
+        html,
+        css,
+        width: args.width,
+        height: args.height,
+        ...(args.source_file && { sourceFilePath: path.resolve(args.source_file) }),
+        sourceUrl: args.url,
+      });
+
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        mainWindow.webContents.send(IPC_CHANNELS.CANVAS_COMPONENT_CREATED, component);
+      }
+
+      const result: any = toExternalShape(component);
+      if (warnings.length > 0) {
+        result.warnings = warnings;
+      }
+      result.stylesheetsInlined = linkTags.length;
+
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'read_source_file',
+    'Read a source file from disk. Use this before write-back to understand the original code structure and preserve logic/props/types.',
+    {
+      file_path: z.string().describe('Absolute path to the source file'),
+    },
+    async (args: any) => {
+      const resolvedPath = path.resolve(args.file_path);
+      try {
+        const content = fs.readFileSync(resolvedPath, 'utf8');
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ path: resolvedPath, size: Buffer.byteLength(content, 'utf8'), content }, null, 2) }],
+        };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error reading ${resolvedPath}: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'list_source_files',
+    'List source files in a project directory. Useful for discovering what components exist before importing them.',
+    {
+      project_root: z.string().describe('Absolute path to the project root'),
+      glob_pattern: z.string().optional().describe('Glob pattern (default: "**/*.{tsx,jsx,ts,js,vue,svelte}")'),
+      max_results: z.number().optional().describe('Maximum files to return (default: 200)'),
+    },
+    async (args: any) => {
+      const root = path.resolve(args.project_root);
+      const maxResults = args.max_results ?? 200;
+      const pattern = args.glob_pattern ?? '**/*.{tsx,jsx,ts,js,vue,svelte}';
+      const skipDirs = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache', '.turbo', '.output']);
+
+      const files: string[] = [];
+
+      function walkDir(dir: string, rel: string): void {
+        if (files.length >= maxResults) return;
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          if (files.length >= maxResults) return;
+          if (entry.isDirectory()) {
+            if (skipDirs.has(entry.name)) continue;
+            walkDir(path.join(dir, entry.name), rel ? `${rel}/${entry.name}` : entry.name);
+          } else if (entry.isFile()) {
+            const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+            // Simple glob matching: check file extension against pattern
+            const ext = path.extname(entry.name);
+            const extensions = pattern.match(/\{([^}]+)\}/)?.[1]?.split(',').map((e: string) => `.${e}`) ?? ['.tsx', '.jsx', '.ts', '.js', '.vue', '.svelte'];
+            if (extensions.includes(ext)) {
+              files.push(relPath);
+            }
+          }
+        }
+      }
+
+      walkDir(root, '');
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ project_root: root, pattern, count: files.length, files }, null, 2) }],
+      };
+    }
+  );
+
   // ── Page management tools ──
 
   server.tool(
@@ -654,7 +854,23 @@ Use frame props on create_component/update_component for frame-level effects —
 ## Fixing mistakes surgically
 
 - **Wrong children in a container?** Use \`insert_html\` with \`mode: "replace_children"\` to swap out a subtree without rebuilding the whole component.
-- **Orphaned or wrong element?** Use \`delete_element\` with the internal \`el-N\` id (visible in HTML returned by \`list_components\`) to remove it without affecting siblings.`
+- **Orphaned or wrong element?** Use \`delete_element\` with the internal \`el-N\` id (visible in HTML returned by \`list_components\`) to remove it without affecting siblings.
+
+## Round-trip workflow (import → iterate → write back)
+
+\`\`\`
+IMPORT (lossless):
+1. fetch_from_url(url, selector?, source_file?) → rendered HTML directly onto canvas
+
+ITERATE:
+2. insert_html, update_element, etc. — visual iteration on canvas
+
+WRITE BACK:
+3. read_source_file(source_file)         → read original source code
+4. export_component(id, format='react')  → see current canvas state as JSX
+5. [Generate updated source preserving logic/props/types]
+6. write_component(id, use_source_path: true) → write back to original file
+\`\`\``
     }
   );
   registerTools(server);

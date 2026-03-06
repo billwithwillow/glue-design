@@ -33,7 +33,7 @@ export class CanvasStore {
 
   // ── Component CRUD (scoped to active page) ──
 
-  create(data: { name: string; html: string; css: string; width?: number; height?: number; frameProps?: FrameProps }): CanvasComponent {
+  create(data: { name: string; html: string; css: string; width?: number; height?: number; frameProps?: FrameProps; sourceFilePath?: string; sourceUrl?: string }): CanvasComponent {
     const id = uuidv4();
     const component: CanvasComponent = {
       id,
@@ -45,6 +45,8 @@ export class CanvasStore {
       x: this.nextX,
       y: this.nextY,
       ...(data.frameProps !== undefined && { frameProps: data.frameProps }),
+      ...(data.sourceFilePath !== undefined && { sourceFilePath: data.sourceFilePath }),
+      ...(data.sourceUrl !== undefined && { sourceUrl: data.sourceUrl }),
     };
 
     this.getActivePageComponents()[id] = component;
@@ -83,6 +85,8 @@ export class CanvasStore {
       component.cssRules = updates.cssRules;
     }
     if (updates.frameProps !== undefined) component.frameProps = updates.frameProps;
+    if (updates.sourceFilePath !== undefined) component.sourceFilePath = updates.sourceFilePath;
+    if (updates.sourceUrl !== undefined) component.sourceUrl = updates.sourceUrl;
 
     return component;
   }
