@@ -44,6 +44,28 @@ function buildCaptureScript(selector?: string): string {
   }
   if (!target) return { error: 'Element not found' };
 
+  // 1b. Resolve relative URLs to absolute so images load from the dev server
+  var origin = window.location.origin;
+  var allMedia = target.querySelectorAll('[src], [srcset], [poster]');
+  for (var i = 0; i < allMedia.length; i++) {
+    var el = allMedia[i];
+    if (el.hasAttribute('src') && el.getAttribute('src').indexOf('://') === -1 && el.getAttribute('src').indexOf('data:') !== 0) {
+      el.setAttribute('src', origin + (el.getAttribute('src').charAt(0) === '/' ? '' : '/') + el.getAttribute('src'));
+    }
+    if (el.hasAttribute('srcset')) {
+      el.setAttribute('srcset', el.getAttribute('srcset').replace(/(^|,\s*)(\/)([^ ,]+)/g, '$1' + origin + '$2$3'));
+    }
+    if (el.hasAttribute('poster') && el.getAttribute('poster').indexOf('://') === -1) {
+      el.setAttribute('poster', origin + (el.getAttribute('poster').charAt(0) === '/' ? '' : '/') + el.getAttribute('poster'));
+    }
+  }
+
+  // 1c. Collapse canvas and video elements (they render blank in static capture)
+  var blanks = target.querySelectorAll('canvas, video');
+  for (var i = 0; i < blanks.length; i++) {
+    blanks[i].style.display = 'none';
+  }
+
   // 2. Collect stylesheets
   var cssChunks = [];
   for (var i = 0; i < document.styleSheets.length; i++) {
@@ -135,9 +157,13 @@ function buildCaptureScript(selector?: string): string {
 
   walkAndCapture(target);
 
+  // Rewrite relative URLs in CSS (background-image, @font-face, etc.)
+  var allCss = cssChunks.join('\\n');
+  allCss = allCss.replace(/url\\(\\/([^)]+)\\)/g, 'url(' + origin + '/$1)');
+
   return {
     html: target.outerHTML,
-    css: cssChunks.join('\\n'),
+    css: allCss,
     computedStyles: computedRules.join('\\n'),
     title: document.title,
     viewportWidth: window.innerWidth,
@@ -183,6 +209,35 @@ export async function captureRenderedPage(opts: CaptureOptions): Promise<Capture
 
     // Extra settle time for JS rendering
     await new Promise(r => setTimeout(r, opts.waitMs ?? 500));
+
+    // Resize window to full content height so IntersectionObserver-based
+    // lazy content (useInView, scroll animations) triggers for all sections
+    const contentHeight = await win.webContents.executeJavaScript(
+      `Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)`
+    );
+    const viewportWidth = opts.viewportWidth ?? 1280;
+    if (contentHeight > win.getBounds().height) {
+      win.setContentSize(viewportWidth, contentHeight);
+      // Scroll incrementally to trigger any scroll-based observers
+      await win.webContents.executeJavaScript(`
+        new Promise(function(resolve) {
+          var totalHeight = document.body.scrollHeight;
+          var step = window.innerHeight;
+          var pos = 0;
+          function scrollStep() {
+            pos += step;
+            window.scrollTo(0, pos);
+            if (pos < totalHeight) {
+              setTimeout(scrollStep, 50);
+            } else {
+              window.scrollTo(0, 0);
+              setTimeout(resolve, 200);
+            }
+          }
+          scrollStep();
+        });
+      `);
+    }
 
     // Inject capture script and extract DOM + styles
     const result = await win.webContents.executeJavaScript(buildCaptureScript(opts.selector));
